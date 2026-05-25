@@ -18,7 +18,7 @@ IMG_MAP = {}  # product_name -> PIL image bytes
 
 def load_images_from_excel():
     global IMG_MAP
-    excel_path = os.path.join(os.path.dirname(__file__), 'Uniearth_LPS_Components_Index__1_.xlsx')
+    excel_path = os.path.join(os.path.dirname(__file__), 'Uniearth LPS Components Index (1).xlsx')
     if not os.path.exists(excel_path):
         print("ERROR: Excel file not found")
         return
