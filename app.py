@@ -193,7 +193,7 @@ def build_excel(items, client, project, qno, validity, today, is_sitc):
         fill = alt_fill if i % 2 == 0 else None
 
         # Description = matched product name from backend
-        desc = item.get('product_name', item.get('desc', ''))
+        desc = item.get('desc', item.get('product_name', ''))
         c(r, 1, i + 1, align='center', fill=fill)
         c(r, 2, desc, fill=fill)
         c(r, 3, '', fill=fill)
@@ -211,7 +211,11 @@ def build_excel(items, client, project, qno, validity, today, is_sitc):
                    i * ROW_H * PT_TO_EMU + int(0.15 * PT_TO_EMU))
         left_emu = int((6 + 52) * CHAR_TO_EMU) + int(0.2 * CHAR_TO_EMU)
 
-        img_data = IMG_MAP.get(desc)
+        # Try exact match, then lowercase, then partial
+        img_data = (IMG_MAP.get(desc) or 
+                   IMG_MAP.get(desc.lower()) or
+                   IMG_MAP.get(item.get('product_name','')) or
+                   IMG_MAP.get(item.get('product_name','').lower()))
         if img_data:
             try:
                 path = os.path.join(tmp_dir, f'img_{i}.png')
