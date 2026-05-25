@@ -7,17 +7,17 @@ from openpyxl.drawing.xdr import XDRPoint2D, XDRPositiveSize2D
 from openpyxl.utils.units import cm_to_EMU
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from PIL import Image as PILImage
-import io, os, zipfile, tempfile
+import io, os, zipfile, tempfile, json
 from lxml import etree
 
 app = Flask(__name__)
 CORS(app)
 
-# Load images from Excel at startup
-IMG_MAP = {}  # product_name -> PIL image bytes
+IMG_MAP = {}       # product_name -> png bytes
+PRODUCT_LIST = []  # list of all product names from index (for matching)
 
-def load_images_from_excel():
-    global IMG_MAP
+def load_from_excel():
+    global IMG_MAP, PRODUCT_LIST
     excel_path = os.path.join(os.path.dirname(__file__), 'Uniearth LPS Components Index (1).xlsx')
     if not os.path.exists(excel_path):
         print("ERROR: Excel file not found")
@@ -25,20 +25,17 @@ def load_images_from_excel():
 
     try:
         with zipfile.ZipFile(excel_path, 'r') as z:
-            # Get image files
             media = {}
             for f in z.namelist():
                 if f.startswith('xl/media/'):
-                    with z.open(f) as img_f:
-                        media[os.path.basename(f)] = img_f.read()
+                    with z.open(f) as src:
+                        media[os.path.basename(f)] = src.read()
 
-            # Get relationships
             with z.open('xl/drawings/_rels/drawing1.xml.rels') as f:
                 tree = etree.parse(f)
             rid_to_file = {r.get('Id'): r.get('Target').replace('../media/', '')
                           for r in tree.getroot()}
 
-            # Get drawing positions (column F = col index 5 = images)
             with z.open('xl/drawings/drawing1.xml') as f:
                 tree = etree.parse(f)
             root = tree.getroot()
@@ -59,52 +56,46 @@ def load_images_from_excel():
                 if col == 6 and img_file and row not in row_to_img:
                     row_to_img[row] = img_file
 
-        # Read product names
         wb = openpyxl.load_workbook(excel_path, data_only=True)
         ws = wb['Sheet1']
 
-        for row_num, img_file in row_to_img.items():
+        for row_num in range(2, ws.max_row + 1):
             name = str(ws.cell(row=row_num, column=3).value or '').replace('\n', ' ').strip()
             remarks = str(ws.cell(row=row_num, column=4).value or '').replace('\n', ' ').strip()
-            if not name: continue
+            if not name:
+                continue
 
-            img_bytes = media.get(img_file)
-            if not img_bytes: continue
+            # Full name = "Product Name Remarks" or just "Product Name"
+            full_name = f"{name} {remarks}".strip() if remarks else name
+            PRODUCT_LIST.append(full_name)
 
-            # Store compressed thumbnail
-            try:
-                pil = PILImage.open(io.BytesIO(img_bytes)).convert('RGB')
-                pil.thumbnail((80, 60), PILImage.LANCZOS)
-                buf = io.BytesIO()
-                pil.save(buf, 'PNG')
-                img_data = buf.getvalue()
+            # Store image if this row has one
+            img_file = row_to_img.get(row_num)
+            if img_file and img_file in media:
+                try:
+                    pil = PILImage.open(io.BytesIO(media[img_file])).convert('RGB')
+                    pil.thumbnail((80, 60), PILImage.LANCZOS)
+                    buf = io.BytesIO()
+                    pil.save(buf, 'PNG')
+                    IMG_MAP[full_name] = buf.getvalue()
+                    # Also store by name alone
+                    IMG_MAP[name] = buf.getvalue()
+                except Exception as e:
+                    print(f"Image error row {row_num}: {e}")
 
-                # Store by combined name and name alone
-                combined = f"{name} {remarks}".strip() if remarks else name
-                IMG_MAP[combined] = img_data
-                IMG_MAP[name] = img_data
-            except Exception as e:
-                print(f"Image error row {row_num}: {e}")
-
-        print(f"Loaded {len(IMG_MAP)} product images from Excel")
+        print(f"Loaded {len(PRODUCT_LIST)} products, {len(IMG_MAP)} with images")
 
     except Exception as e:
-        print(f"Failed to load images: {e}")
-
-def get_img_path(product_name, idx, tmp_dir):
-    img_data = IMG_MAP.get(product_name)
-    if not img_data: return None
-    try:
-        path = os.path.join(tmp_dir, f'img_{idx}.png')
-        with open(path, 'wb') as f:
-            f.write(img_data)
-        return path
-    except:
-        return None
+        print(f"Failed to load Excel: {e}")
 
 @app.route('/health', methods=['GET'])
 def health():
-    return jsonify({'status': 'ok', 'images': len(IMG_MAP)})
+    return jsonify({'status': 'ok', 'products': len(PRODUCT_LIST), 'images': len(IMG_MAP)})
+
+@app.route('/products', methods=['GET'])
+def get_products():
+    """Return all product names for the frontend dropdown"""
+    return jsonify({'products': PRODUCT_LIST})
 
 @app.route('/generate', methods=['POST', 'OPTIONS'])
 def generate():
@@ -152,7 +143,6 @@ def build_excel(items, client, project, qno, validity, today, is_sitc):
         if num_fmt: cell.number_format = num_fmt
         return cell
 
-    # Letterhead
     ws.merge_cells('A1:G1')
     ws['A1'] = 'Uniearth Earthing Solutions Pvt Ltd'
     ws['A1'].font = Font(name='Arial', bold=True, size=14, color='1B2A4A')
@@ -202,8 +192,10 @@ def build_excel(items, client, project, qno, validity, today, is_sitc):
         ws.row_dimensions[r].height = ROW_H
         fill = alt_fill if i % 2 == 0 else None
 
+        # Description = matched product name from backend
+        desc = item.get('product_name', item.get('desc', ''))
         c(r, 1, i + 1, align='center', fill=fill)
-        c(r, 2, item.get('desc', ''), fill=fill)
+        c(r, 2, desc, fill=fill)
         c(r, 3, '', fill=fill)
         c(r, 4, item.get('unit', ''), align='center', fill=fill)
         c(r, 5, item.get('qty', 1), align='center', fill=fill)
@@ -214,24 +206,30 @@ def build_excel(items, client, project, qno, validity, today, is_sitc):
         c(r, 7, total, align='right', fill=fill, num_fmt='#,##0', bold=True)
         sub += total
 
-        top_emu = sum(h * PT_TO_EMU for h in header_heights_pt) + i * ROW_H * PT_TO_EMU + int(0.15 * PT_TO_EMU)
+        # Image
+        top_emu = (sum(h * PT_TO_EMU for h in header_heights_pt) +
+                   i * ROW_H * PT_TO_EMU + int(0.15 * PT_TO_EMU))
         left_emu = int((6 + 52) * CHAR_TO_EMU) + int(0.2 * CHAR_TO_EMU)
 
-        img_path = get_img_path(item.get('product_name', ''), i, tmp_dir)
-        if img_path:
+        img_data = IMG_MAP.get(desc)
+        if img_data:
             try:
-                xl_img = XLImg(img_path)
+                path = os.path.join(tmp_dir, f'img_{i}.png')
+                with open(path, 'wb') as f:
+                    f.write(img_data)
+                xl_img = XLImg(path)
                 xl_img.anchor = AbsoluteAnchor(
                     pos=XDRPoint2D(left_emu, top_emu),
                     ext=XDRPositiveSize2D(cm_to_EMU(2.2), cm_to_EMU(1.6))
                 )
                 ws.add_image(xl_img)
             except Exception as e:
-                print(f"Embed error: {e}")
+                print(f"Image embed error row {i}: {e}")
 
     gst = round(sub * 0.18)
     last = HDR + 1 + len(items)
     ws.row_dimensions[last].height = 5
+
     for j, (label, val) in enumerate([('Sub Total', sub), ('IGST @ 18%', gst), ('Total Amount', sub + gst)], last + 1):
         ws.row_dimensions[j].height = 18
         ws.merge_cells(f'A{j}:E{j}')
@@ -271,7 +269,7 @@ def build_excel(items, client, project, qno, validity, today, is_sitc):
     wb.save(out)
     return out.getvalue()
 
-load_images_from_excel()
+load_from_excel()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
