@@ -67,7 +67,10 @@ def load_from_excel():
 
             # Full name = "Product Name Remarks" or just "Product Name"
             full_name = f"{name} {remarks}".strip() if remarks else name
-            PRODUCT_LIST.append(full_name)
+
+            # Add ALL products to list regardless of image
+            if full_name not in PRODUCT_LIST:
+                PRODUCT_LIST.append(full_name)
 
             # Store image if this row has one
             img_file = row_to_img.get(row_num)
@@ -78,7 +81,6 @@ def load_from_excel():
                     buf = io.BytesIO()
                     pil.save(buf, 'PNG')
                     IMG_MAP[full_name] = buf.getvalue()
-                    # Also store by name alone
                     IMG_MAP[name] = buf.getvalue()
                 except Exception as e:
                     print(f"Image error row {row_num}: {e}")
