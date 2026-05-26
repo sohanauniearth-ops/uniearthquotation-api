@@ -85,6 +85,51 @@ def load_from_excel():
                 except Exception as e:
                     print(f"Image error row {row_num}: {e}")
 
+
+        # ── MANUAL IMAGE FIXES ─────────────────────────────────────────
+        if 'Copper strip' in IMG_MAP:
+            base_cu = IMG_MAP['Copper strip']
+            for k in ['copper bonded conductor','Copper Bare Conductor','Bare Copper Cable 70mm bare copper cable']:
+                if k not in IMG_MAP: IMG_MAP[k] = base_cu
+
+        if 'Copper Bonded Steel Rod' in IMG_MAP:
+            base_cb = IMG_MAP['Copper Bonded Steel Rod']
+            for k in ['Copper Bonded Steel Rod Copper Bonded Steel Rod 1500mm Long and 17.2mm dia',
+                      'Copper Bonded Steel Rod 2000mm x 15mm']:
+                IMG_MAP[k] = base_cb
+
+        if 'Concrete Base For  Air Terminal Support Light 8.5kg' in IMG_MAP:
+            IMG_MAP['Concrete Base Support  Air Terminal Heavy 17kg'] = IMG_MAP['Concrete Base For  Air Terminal Support Light 8.5kg']
+
+        if 'Air Terminal Rod AL LA 1500 mm x 16mm' in IMG_MAP:
+            base_at = IMG_MAP['Air Terminal Rod AL LA 1500 mm x 16mm']
+            for k in ['Air Terminal Rod AL LA 2000 mm x 16mm','Air Terminal Rod AL LA 1200 mm x 12mm']:
+                IMG_MAP[k] = base_at
+
+        if 'Test Clamp Wire to GI strip' in IMG_MAP:
+            base_tc = IMG_MAP['Test Clamp Wire to GI strip']
+            for k in ['Test Clamp','Test Clamp Flat to flat','Test Clamp with Bimetallic Connector']:
+                IMG_MAP[k] = base_tc
+
+        if 'Parallel Connector Rebar SS 16mm to 32 mm dia' in IMG_MAP:
+            base_pc = IMG_MAP['Parallel Connector Rebar SS 16mm to 32 mm dia']
+            for k in ['Parallel Connector Rebar SS 16mm to 45 mm dia','Parallel Connector Rebar SS 16mm to 25 mm dia']:
+                IMG_MAP[k] = base_pc
+
+        if 'Galvanised Iron  Flat Conductor' in IMG_MAP:
+            base_gi = IMG_MAP['Galvanised Iron  Flat Conductor']
+            for k in ['GI Wire 8SWG','MS Flat 50x6','GI Rod 12mm']:
+                IMG_MAP[k] = base_gi
+
+        if 'Expansion Pieces AL' in IMG_MAP:
+            IMG_MAP['Expansion Pieces GI'] = IMG_MAP['Expansion Pieces AL']
+
+        if 'Circular Conductor AL wire' in IMG_MAP:
+            IMG_MAP['Circular Conductor GI'] = IMG_MAP['Circular Conductor AL wire']
+
+        if 'Flat Conductor Holder GI flat holder' in IMG_MAP:
+            IMG_MAP['Conductor Holder Running clamp'] = IMG_MAP['Flat Conductor Holder GI flat holder']
+
         print(f"Loaded {len(PRODUCT_LIST)} products, {len(IMG_MAP)} with images")
 
     except Exception as e:
