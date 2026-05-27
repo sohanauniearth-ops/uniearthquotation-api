@@ -13,14 +13,15 @@ from lxml import etree
 app = Flask(__name__)
 CORS(app)
 
-IMG_MAP = {}
-PRODUCT_LIST = []
+IMG_MAP = {}       # name -> png bytes
+COST_MAP = {}      # name -> cost price (float or None)
+PRODUCT_LIST = []  # ordered list of all names
 
 def load_from_excel():
-    global IMG_MAP, PRODUCT_LIST
-    excel_path = os.path.join(os.path.dirname(__file__), 'ProductListUniearth.xlsx')
+    global IMG_MAP, COST_MAP, PRODUCT_LIST
+    excel_path = os.path.join(os.path.dirname(__file__), 'ProductList.xlsx')
     if not os.path.exists(excel_path):
-        print("ERROR: ProductListUniearth.xlsx not found")
+        print("ERROR: ProductList.xlsx not found")
         return
     try:
         with zipfile.ZipFile(excel_path, 'r') as z:
@@ -38,7 +39,7 @@ def load_from_excel():
             ns = {'xdr':'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing',
                   'a':'http://schemas.openxmlformats.org/drawingml/2006/main'}
             row_to_img = {}
-            for anchor in (root.findall('.//xdr:twoCellAnchor',ns) +
+            for anchor in (root.findall('.//xdr:twoCellAnchor',ns)+
                           root.findall('.//xdr:oneCellAnchor',ns)):
                 from_e = anchor.find('xdr:from',ns)
                 if from_e is None: continue
@@ -55,10 +56,18 @@ def load_from_excel():
         ws = wb.active
 
         for row_num in range(2, ws.max_row+1):
-            name = str(ws.cell(row=row_num,column=1).value or '').replace('\n',' ').strip()
-            if not name: continue
+            raw = ws.cell(row=row_num, column=1).value
+            if not raw: continue
+            name = str(raw).replace('\n',' ').strip()
+            cost_val = ws.cell(row=row_num, column=3).value
+
             if name not in PRODUCT_LIST:
                 PRODUCT_LIST.append(name)
+
+            # Cost price — None if blank
+            COST_MAP[name] = float(cost_val) if cost_val is not None else None
+
+            # Image
             img_file = row_to_img.get(row_num)
             if img_file and img_file in media:
                 try:
@@ -70,17 +79,19 @@ def load_from_excel():
                 except Exception as e:
                     print(f"Image error row {row_num}: {e}")
 
-        print(f"Loaded {len(PRODUCT_LIST)} products, {len(IMG_MAP)} with images")
+        print(f"Loaded {len(PRODUCT_LIST)} products, {len(IMG_MAP)} with images, {sum(1 for v in COST_MAP.values() if v is not None)} with costs")
     except Exception as e:
         print(f"Failed to load Excel: {e}")
 
 @app.route('/health', methods=['GET'])
 def health():
-    return jsonify({'status':'ok','products':len(PRODUCT_LIST),'images':len(IMG_MAP)})
+    return jsonify({'status':'ok','products':len(PRODUCT_LIST),'images':len(IMG_MAP),'costs':sum(1 for v in COST_MAP.values() if v is not None)})
 
 @app.route('/products', methods=['GET'])
 def get_products():
-    return jsonify({'products': PRODUCT_LIST})
+    # Return list with cost prices
+    result = [{'name':name,'cost':COST_MAP.get(name)} for name in PRODUCT_LIST]
+    return jsonify({'products': result})
 
 @app.route('/generate', methods=['POST','OPTIONS'])
 def generate():
@@ -129,7 +140,11 @@ def build_excel(items, client, project, qno, validity, today, is_sitc):
     ws['A2'].alignment=Alignment(horizontal='center',vertical='center')
     ws.row_dimensions[2].height=13
     ws.row_dimensions[3].height=5
-    for row,l1,v1,l2,v2 in [(4,'Company Name:',client,'Ref. No.:',qno),(5,'Project:',project,'Date:',today),(6,'Contact Person:','','Ph. No.','',''),(7,'E-Mail ID:','','','')]:
+    for row,l1,v1,l2,v2 in [
+        (4,'Company Name:',client,'Ref. No.:',qno),
+        (5,'Project:',project,'Date:',today),
+        (6,'Contact Person:','','Ph. No.',''),
+        (7,'E-Mail ID:','','','')]:
         ws.cell(row=row,column=1,value=l1).font=Font(name='Arial',bold=True,size=9)
         ws.merge_cells(f'B{row}:D{row}')
         ws.cell(row=row,column=2,value=v1).font=Font(name='Arial',size=9)
@@ -140,7 +155,7 @@ def build_excel(items, client, project, qno, validity, today, is_sitc):
     ws.row_dimensions[8].height=5
     HDR=9
     ws.row_dimensions[HDR].height=30
-    for i,h in enumerate(['S.No','Description of Item','Item\nImages','UOM','Qty','Rate\n(Supply)','Supply\nTotal'],1):
+    for i,h in enumerate(['S.No','Description of Item','Item Images','UOM','Qty','Rate (Supply)','Supply Total'],1):
         cell=ws.cell(row=HDR,column=i,value=h)
         cell.font=Font(name='Arial',bold=True,size=9,color='FFFFFF')
         cell.fill=hdr_fill
@@ -162,7 +177,7 @@ def build_excel(items, client, project, qno, validity, today, is_sitc):
         c(r,1,i+1,align='center',fill=fill)
         c(r,2,desc,fill=fill)
         c(r,3,'',fill=fill)
-        c(r,4,item.get('unit',''),align='center',fill=fill)
+        c(r,4,item.get('unit','Nos'),align='center',fill=fill)
         qty=item.get('qty',1)
         c(r,5,qty,align='center',fill=fill)
         yp=round(item.get('your_price',0))
@@ -173,7 +188,6 @@ def build_excel(items, client, project, qno, validity, today, is_sitc):
 
         top_emu=(sum(h*PT_TO_EMU for h in header_heights_pt)+i*ROW_H*PT_TO_EMU+int(0.15*PT_TO_EMU))
         left_emu=int((6+52)*CHAR_TO_EMU)+int(0.2*CHAR_TO_EMU)
-
         prod_name=item.get('product_name','')
         img_data=IMG_MAP.get(prod_name)
         if img_data:
@@ -202,7 +216,6 @@ def build_excel(items, client, project, qno, validity, today, is_sitc):
         vc.alignment=Alignment(horizontal='right',vertical='center')
         vc.border=bdr
         ws.cell(row=j,column=7).border=bdr
-
     tr=last+6
     ws.merge_cells(f'A{tr}:G{tr}')
     ws.cell(row=tr,column=1,value='TERMS & CONDITIONS').font=Font(name='Arial',bold=True,size=10)
@@ -223,7 +236,6 @@ def build_excel(items, client, project, qno, validity, today, is_sitc):
     ws.column_dimensions['E'].width=8
     ws.column_dimensions['F'].width=12
     ws.column_dimensions['G'].width=14
-
     out=io.BytesIO()
     wb.save(out)
     return out.getvalue()
